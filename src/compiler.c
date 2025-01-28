@@ -220,6 +220,8 @@ ParseRule rules[] = {
     [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
 };
 
+// Vaughan Pratt's "top-down operator precedence parsing".
+// Explanation attempt at the very end of the file ->
 static void parsePrecedence(Precedence precedence) {
     advance();
     ParseFn prefixRule = getRule(parser.previous.type)->prefix;
@@ -256,3 +258,62 @@ bool compile(const char *source, Chunk* chunk) {
 
     return !parser.hadError;
 }
+
+// Here is my attempt at explaining how the parsing works here step by step.
+//
+// Consider we're parsing this expression: 3 * 4 - 8
+//
+// Call advance to put the first token into parser.current. current = NUM 3
+// Call parsePrecedence with very low precedence (PREC_ASSIGNMENT).
+// Call advance. previous = NUM 3, current = STAR
+//
+// Get prefix function for previous; number().
+// Call number which puts previous (3) into the value array (VA). VA = [3]
+// The index of the value is emitted as constant into the instruction chunk.
+// PREC_ASSIGNMENT < precedence of STAR (FACTOR), so...
+// Call advance. previous = STAR, current = NUM 4
+//
+// Get infix function for previous; binary().
+// Call binary, where operator type is STAR
+// Binary calls parsePrecedence with higher precedence (FACTOR + 1 = UNARY)
+// Call advance. previous = NUM 4, current = MINUS
+//
+// Get prefix function for previous; number()
+// Call number which puts previous (4) into the VA. VA = [3, 4]
+// Value index emitted into chunk. Chunk: [CONST, 0, CONST, 1]
+// PREC_UNARY is not <= precedence of MINUS, so we return to binary call
+// Emit operator (STAR) into chunk. Chunk: [CONST, 0, CONST, 1, MULT]
+// Return from binary back to while loop in parsePrecedence
+// Precedence here is still PREC_ASSIGNMENT which is <= precedence of MINUS, so loop again...
+// Call advance. previous = MINUS, current = NUM 8
+//
+// Get infix function for previous; binary()
+// Call binary, where operator type is MINUS
+// Binary calls parsePrecedence with higher precedence (TERM + 1 = FACTOR)
+// Call advance. previous = NUM 8, current = EOF
+//
+// Get prefix function for previous; number()
+// Call number which puts previous (8) into the VA. VA = [3, 4, 8]
+// Value index emitted into chunk. Chunk: [CONST, 0, CONST, 1, MULT, CONST, 2]
+// PREC_FACTOR is not <= precedence of EOF (NONE), se we return to binary call
+// Emit operator (MINUS) into chunk. Chunk: [CONST, 0, CONST, 1, MULT, CONST, 2, SUBTR]
+// Return from binary back to while loop in parsePrecedence
+// Precedence here is still PREC_ASSIGNMENT which is not <= precedence of EOF, so return
+// Compilation done
+// Finish chunk with OP_RETURN instruction
+//
+// Chunk: [CONST, 0, CONST, 1, MULT, CONST, 2, SUBTR, RETURN]
+// Value array: [3, 4, 8]
+//
+// Interpretation:
+// CONST -> read next byte (0), use it as VA index and push to stack
+// Stack: [3]
+// CONST -> read next byte (1), use it as VA index and push to stack
+// Stack: [3, 4]
+// MULT -> pop twice and multiply values. push result to stack
+// Stack: [12]
+// CONST -> read next byte (2), use it as VA index and push to stack
+// Stack: [12, 8]
+// SUBTR -> pop twice and subtract values. push result to stack
+// Stack: [4]
+// RETURN -> pop once and print the value. prints 4
