@@ -25,5 +25,28 @@ void freeValueArray(ValueArray* array) {
 }
 
 void printValue(Value value) {
-    printf("%g", value);
+    switch (value.type) {
+        case VAL_BOOL:
+            printf(FROM_BOOL_VAL(value) ? "true" : "false");
+            break;
+        case VAL_NIL:
+            printf("nil");
+            break;
+        case VAL_NUMBER:
+            // "%g" prints a number as an int, float, or scientific notation depending on which
+            // makes the "most sense". It's basically a pretty way to print any number(?).
+            printf("%g", FROM_NUM_VAL(value));
+            break;
+    }
+}
+
+bool valuesEqual(Value a, Value b) {
+    if (a.type != b.type) return false;
+
+    switch (a.type) {
+        case VAL_BOOL: return FROM_BOOL_VAL(a) == FROM_BOOL_VAL(b);
+        case VAL_NIL: return true;
+        case VAL_NUMBER: return FROM_NUM_VAL(a) == FROM_NUM_VAL(b);
+        default: return false; // unreachable
+    }
 }
