@@ -1,9 +1,12 @@
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 #include "common.h"
 #include "debug.h"
 #include "vm.h"
 #include "compiler.h"
+#include "memory.h"
+#include "object.h"
 #include "value.h"
 
 VM vm;
@@ -27,9 +30,11 @@ static void runtimeError(const char* format, ...) {
 
 void initVM() {
     resetStack();
+    vm.objects = NULL;
 }
 
 void freeVM() {
+    freeObjects();
 }
 
 // The value stack doesn't actually remove any data. It just moves the stackTop
@@ -50,6 +55,20 @@ static Value peekStack(int distance) {
 
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !FROM_BOOL_VAL(value));
+}
+
+static void concatenate() {
+    ObjString* b = AS_STRING_OBJ(pop());
+    ObjString* a = AS_STRING_OBJ(pop());
+
+    int length = a->length + b->length;
+    char* chars = ALLOCATE(char, length + 1);
+    memcpy(chars, a->chars, a->length);
+    memcpy(chars + a->length, b->chars, b->length);
+    chars[length] = '\0';
+
+    ObjString* result = takeString(chars, length);
+    push(TO_OBJ_VAL((Obj*)result));
 }
 
 static InterpretResult run() {
@@ -111,7 +130,19 @@ static InterpretResult run() {
             case OP_GREATER: BINARY_OP(TO_BOOL_VAL, >); break;
             case OP_LESS: BINARY_OP(TO_BOOL_VAL, <); break;
             // notice how we pass a macro as an argument to a macro ;)
-            case OP_ADD: BINARY_OP(TO_NUM_VAL, +); break;
+            case OP_ADD: {
+                if (IS_STRING_OBJ(peekStack(0)) && IS_STRING_OBJ(peekStack(1))) {
+                    concatenate();
+                } else if (IS_NUMBER(peekStack(0)) && IS_NUMBER(peekStack(1))) {
+                    double b = FROM_NUM_VAL(pop());
+                    double a = FROM_NUM_VAL(pop());
+                    push(TO_NUM_VAL(a + b));
+                } else {
+                    runtimeError("Operands must be two numbers or two strings.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
+            }
             case OP_SUBTRACT: BINARY_OP(TO_NUM_VAL, -); break;
             case OP_MULTIPLY: BINARY_OP(TO_NUM_VAL, *); break;
             case OP_DIVIDE: BINARY_OP(TO_NUM_VAL, /); break;
