@@ -52,15 +52,10 @@ bool valuesEqual(Value a, Value b) {
         case VAL_BOOL: return FROM_BOOL_VAL(a) == FROM_BOOL_VAL(b);
         case VAL_NIL: return true;
         case VAL_NUMBER: return FROM_NUM_VAL(a) == FROM_NUM_VAL(b);
-        case VAL_OBJ: {
-            ObjString* aString = AS_STRING_OBJ(a);
-            ObjString* bString = AS_STRING_OBJ(b);
-
-            // compare string data so that "string" == "string" is truthy even though both
-            // strings are technically separate objects on the heap
-            return aString->length == bString->length &&
-                   memcmp(aString->chars, bString->chars, aString->length) == 0;
-        }
+        // Compare object pointers.
+        // If a and b don't point to the same object, they're not equal.
+        // Strings are interned so equal strings point to the same object.
+        case VAL_OBJ: return FROM_OBJ_VAL(a) == FROM_OBJ_VAL(b); 
         default: return false; // unreachable
     }
 }
