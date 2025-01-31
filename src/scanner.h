@@ -38,8 +38,8 @@ typedef enum {
 // value is done later in the compiler.
 typedef struct {
     TokenType type;
-    const char* start;
-    int length;
+    const char* start; // start of lexeme
+    int length; // length of lexeme
     int line;
 } Token;
 
