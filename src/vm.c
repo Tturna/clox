@@ -78,9 +78,12 @@ static void concatenate() {
 
 static InterpretResult run() {
 // Essentially just replace every instance of "READ_BYTE()" with "(*vm.ip++)".
-// It dereferences vm.ip which is a pointer to the next instruction, then increment it.
+// It dereferences vm.ip which is a pointer to the next instruction, then increments it.
 #define READ_BYTE() (*vm.ip++)
 #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
+// Takes the next two bytes from the chunk and builds a 16 bit uint from them.
+#define READ_SHORT() \
+    (vm.ip += 2, (uint16_t)((vm.ip[-2] << 8) | vm.ip[-1]))
 #define READ_STRING() AS_STRING_OBJ(READ_CONSTANT())
 
 // do-while is used as a macro trick to include multiple statements while also
@@ -209,6 +212,21 @@ static InterpretResult run() {
                 printf("\n");
                 break;
             }
+            case OP_JUMP: {
+                uint16_t offset = READ_SHORT();
+                vm.ip += offset;
+                break;
+            }
+            case OP_JUMP_IF_FALSE: {
+                uint16_t offset = READ_SHORT();
+                if (isFalsey(peekStack(0))) vm.ip += offset;
+                break;
+            }
+            case OP_LOOP: {
+                uint16_t offset = READ_SHORT();
+                vm.ip -= offset;
+                break;
+            }
             case OP_RETURN: {
                 // exit
                 return INTERPRET_OK;
@@ -218,6 +236,7 @@ static InterpretResult run() {
 
 #undef READ_BYTE
 #undef READ_CONSTANT
+#undef READ_SHORT
 #undef READ_STRING
 #undef BINARY_OP
 }

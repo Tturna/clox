@@ -1,0 +1,15 @@
+var a = 5;
+var total = 0;
+
+for (var i = 0; i < a; i = i + 1) {
+    total = total + i;
+}
+
+print total;
+
+while (a > 0) {
+    total = total + a;
+    a = a - 1;
+}
+
+print total;

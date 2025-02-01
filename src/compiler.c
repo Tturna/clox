@@ -132,6 +132,30 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
     emitByte(byte2);
 }
 
+static void emitLoop(int loopStart) {
+    emitByte(OP_LOOP);
+
+    int offset = currentChunk()->count - loopStart + 2;
+
+    if (offset > UINT16_MAX) error("Loop body too large.");
+
+    emitByte((offset >> 8) & 0xff);
+    emitByte(offset & 0xff);
+}
+
+static int emitJump(uint8_t instruction) {
+    emitByte(instruction);
+    // Emit a 2 byte placeholder operand for the jump offset.
+    // Use backpatching to fill these placeholders later after we know the amount
+    // of instructions to skip. This is done in patchJump().
+    emitByte(0xff);
+    emitByte(0xff);
+
+    // count - 2 is the amount of instructions before the 2 placeholders, which also happens
+    // to be the index of the first placeholder. Keep this in mind when you look at patchJump().
+    return currentChunk()->count - 2;
+}
+
 static void emitReturn() {
     emitByte(OP_RETURN);
 }
@@ -149,6 +173,28 @@ static uint8_t makeConstant(Value value) {
 
 static void emitConstant(Value value) {
     emitBytes(OP_CONSTANT, makeConstant(value));
+}
+
+static void patchJump(int offset) {
+    // At this point, count includes the instructions of the "then" block of the if statement.
+    // offset is the index of the first jump length placeholder, which also happens to be the
+    // amount of instructions that came before it (including the jump instruction).
+    // Current instruction count - instructions before the placeholders - 2 placeholders
+    // = the amount of instructions in the "then" block, assuming this function was called
+    // right after that block was compiled.
+    int jumpLength = currentChunk()->count - offset - 2;
+
+    if (jumpLength > UINT16_MAX) {
+        error("Too much code to jump over.");
+    }
+
+    // Instructions are 1 byte, but we want to store a 16 bit jump length indicator.
+    // Take the first 8 bits of the value, shift them to be the last 8, and filter the result
+    // so the first 8 bits are truly empty.
+    // Filter the original value directly to only include the last 8 bits.
+    // Effectively, this splits the 16 bit value into two 8 bit values.
+    currentChunk()->code[offset] = (jumpLength >> 8) & 0xff;
+    currentChunk()->code[offset + 1] = jumpLength & 0xff;
 }
 
 static void initCompiler(Compiler* compiler) {
@@ -194,6 +240,7 @@ static uint8_t identifierConstant(Token* name);
 static int resolveLocal(Compiler* compiler, Token* name);
 static uint8_t parseVariable(const char* errorMessage);
 static void defineVariable(uint8_t global);
+static void and_(bool canAssign);
 
 static void binary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
@@ -259,10 +306,160 @@ static void expressionStatement() {
     emitByte(OP_POP);
 }
 
+// This shit is fucking confusing because there's a weird jumping dance that happens
+// because in a traditional for loop, there is an increment clause that is textually before
+// the loop body but it's expected to run after the body. This combined with the fact that
+// this code exists to create the instructions for the loop logic will mess with your brain.
+// You have to think about the instructions this creates and the order of them to understand
+// how this works.
+static void forStatement() {
+    beginScope();
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+
+    if (tryConsume(TOKEN_SEMICOLON)) {
+        // no initializer
+    } else if (tryConsume(TOKEN_VAR)) {
+        varDeclaration();
+    } else {
+        expressionStatement();
+    }
+
+    // This variable indicates the point where the loop will jump after the loop body is done
+    // executing. It will either be here in the condition evaluation portion of changed to be
+    // in the increment portion if it exists.
+    int loopStartOffset = currentChunk()->count;
+    int exitJump = -1;
+    
+    if (!tryConsume(TOKEN_SEMICOLON)) {
+        // Compile loop condition. This compiles the instructions that evaluate any variables
+        // at runtime. That means if you jump to a point before this, any variables will be
+        // pulled and evaluated again (by the same instructions). The variables are not evaluated
+        // at compile time and that's why the condition can change and loops don't have to be infinite.
+        expression();
+        consume(TOKEN_SEMICOLON, "Expect ';' after loop condition.");
+
+        // Emit a jump that skips the whole loop block if the condition evaluates to false
+        exitJump = emitJump(OP_JUMP_IF_FALSE);
+
+        // Pop the evaluated loop condition if it's true. This gets jumped over if it's false
+        emitByte(OP_POP);
+    }
+
+    if (!tryConsume(TOKEN_RIGHT_PAREN)) {
+        // If there is an increment block, start it with an instruction that skips itself.
+        // Do this so that it doesn't get executed before the loop body. This could be done
+        // differently if we didn't use a single-pass compiler.
+        int preIncrementOffset = emitJump(OP_JUMP);
+
+        // Record the point at which the increment block starts so the loop body can jump to it.
+        int incrementOffset = currentChunk()->count;
+
+        // Compile increment expression
+        expression();
+
+        // Pop the result of the expression because this increment block is only used
+        // for its side effect
+        emitByte(OP_POP);
+        consume(TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        // Jump back to the loop condition evaluation portion that then jumps over this whole
+        // increment portion to reach the loop body.
+        emitLoop(loopStartOffset);
+
+        // Change loop start point to be the increment start point. This makes it so if there is
+        // no increment block, then after the loop body is done, it jumps back to the condition
+        // evaluation portion that then naturally continues to the body again.
+        // If there is an increment block, the loop body jumps to it and the increment portion
+        // jumps to the condition evaluation, which naturally comes back to increment again, but
+        // we have a jump that skips the increment after the condition check so it's all good.
+        loopStartOffset = incrementOffset;
+
+        // Backpatch the jump that skips the increment portion after the condition is evaluated.
+        patchJump(preIncrementOffset);
+    }
+
+    // Compile loop body.
+    statement();
+
+    // Jump to condition evaluation if there is no increment block.
+    // Jump to increment block if there is one. It will then jump to condition evaluation.
+    emitLoop(loopStartOffset);
+
+    // If there is a loop condition expression, patch the jump that skips the loop
+    if (exitJump != -1) {
+        patchJump(exitJump);
+
+        // Pop the evaluated loop condition. At this point it's false and we jumped here
+        // from the condition evaluation bit.
+        emitByte(OP_POP);
+    }
+
+    endScope();
+}
+
+static void ifStatement() {
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+    // Capture the amount of instructions up to and including the if statement
+    int ifStatementOffset = emitJump(OP_JUMP_IF_FALSE);
+
+    // Pop the evaluated condition value from the stack. This is jumped over if the condition
+    // is falsey.
+    emitByte(OP_POP);
+    statement(); // compile then-block
+
+    // Capture the amount of instructions up to and including the else statement
+    int elseStatementOffset = emitJump(OP_JUMP);
+
+    // Patch the jump length for the then-block jump. The length is then-block +
+    // the instructions to jump over the else-block if the condition was truthy.
+    patchJump(ifStatementOffset);
+
+    // Pop the condition value in the else-block if the condition was falsey.
+    // Note: This makes it so technically there is an else-block even in if statements where
+    // the user doesn't explicitly write one. In those cases, the only thing the else-block does
+    // is pop the evaluated condition from the temp value stack.
+    emitByte(OP_POP);
+
+    // If there is an else-block, compile it.
+    if (tryConsume(TOKEN_ELSE)) statement();
+
+    // Patch the jump length for the else-block jump. The length is just else-block.
+    patchJump(elseStatementOffset);
+}
+
 static void printStatement() {
     expression();
     consume(TOKEN_SEMICOLON, "Expect ';' after value.");
     emitByte(OP_PRINT);
+}
+
+static void whileStatement() {
+    // Record the point when the loop condition is evaluated.
+    int preConditionOffset = currentChunk()->count;
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+
+    // Compile the instructions to pull any variables and evaluate the loop condition
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+    // Jump past the loop body if condition is false.
+    int whileStatementOffset = emitJump(OP_JUMP_IF_FALSE);
+
+    // Pop the evaluated condition expression value, which is true at this point.
+    emitByte(OP_POP);
+    statement();
+
+    // Jump back to condition evaluation.
+    emitLoop(preConditionOffset);
+
+    // Jump here if the loop condition is falsey.
+    patchJump(whileStatementOffset);
+
+    // Pop the condition value from the temp value stack if condition was falsey.
+    emitByte(OP_POP);
 }
 
 static void synchronize() {
@@ -306,6 +503,12 @@ static void declaration() {
 static void statement() {
     if (tryConsume(TOKEN_PRINT)) {
         printStatement();
+    } else if (tryConsume(TOKEN_FOR)) {
+        forStatement();
+    } else if (tryConsume(TOKEN_IF)) {
+        ifStatement();
+    } else if (tryConsume(TOKEN_WHILE)) {
+        whileStatement();
     } else if (tryConsume(TOKEN_LEFT_BRACE)) {
         beginScope();
         block();
@@ -323,6 +526,24 @@ static void grouping(bool canAssign) {
 static void number(bool canAssign) {
     double value = strtod(parser.previous.start, NULL); // convert string to double
     emitConstant(TO_NUM_VAL(value));
+}
+
+// For the record, according to Crafting Interpreters (Robert Nystrom), this type of jump
+// dance is inefficient and makes "or" slower than "and", which is a bit stupid.
+static void or_(bool canAssign) {
+    // At this point, the left side is already compiled and its value is on the stack.
+    // If it's true, we need to skip the right hand side. That's done by jumping over it.
+    // If it's false, we jump over the jump so the right hand gets compiled and evaluated.
+    int wiggleJump = emitJump(OP_JUMP_IF_FALSE);
+    int skipJump = emitJump(OP_JUMP);
+
+    patchJump(wiggleJump);
+
+    // Pop the left side if it's falsey and use the right side as the result.
+    emitByte(OP_POP);
+    parsePrecedence(PREC_OR);
+
+    patchJump(skipJump);
 }
 
 static void string(bool canAssign) {
@@ -403,7 +624,7 @@ ParseRule rules[] = {
     [TOKEN_IDENTIFIER]    = {variable, NULL,   PREC_NONE},
     [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
     [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
-    [TOKEN_AND]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_AND]           = {NULL,     and_,   PREC_AND},
     [TOKEN_CLASS]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_ELSE]          = {NULL,     NULL,   PREC_NONE},
     [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
@@ -411,7 +632,7 @@ ParseRule rules[] = {
     [TOKEN_FUN]           = {NULL,     NULL,   PREC_NONE},
     [TOKEN_IF]            = {NULL,     NULL,   PREC_NONE},
     [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
-    [TOKEN_OR]            = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_OR]            = {NULL,     or_,    PREC_OR},
     [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
     [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
@@ -542,6 +763,19 @@ static void defineVariable(uint8_t global) {
     }
 
     emitBytes(OP_DEFINE_GLOBAL, global);
+}
+
+static void and_(bool canAssign) {
+    // At this point, the left hand side of the and is compiled and on the stack.
+    // Add a conditional jump to skip the right hand if left hand is false.
+    int leftSideOffset = emitJump(OP_JUMP_IF_FALSE);
+
+    // If left hand is true, pop it and use right hand as the result of the and operation.
+    emitByte(OP_POP);
+    parsePrecedence(PREC_AND);
+
+    // Backpatch the length of the right hand side instructions so the short-circuit jump works.
+    patchJump(leftSideOffset);
 }
 
 static ParseRule* getRule(TokenType type) {
