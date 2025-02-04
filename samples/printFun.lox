@@ -1,0 +1,8 @@
+fun
+asd
+()
+{
+    print "Useless";
+}
+
+print asd;

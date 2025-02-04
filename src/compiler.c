@@ -47,7 +47,18 @@ typedef struct {
     int depth; // scope depth of the block where var was declared
 } Local;
 
-typedef struct {
+typedef enum {
+    TYPE_FUNCTION,
+    TYPE_SCRIPT
+} FunctionType;
+
+typedef struct Compiler {
+    struct Compiler* enclosing;
+    // Store the current function we're compiling code for. In global scope, we use kind of an
+    // implicit main() function. Global variables don't care about this though I guess.
+    ObjFunction* function;
+    FunctionType type; // so the compiler knows whether we are in top level code vs function body
+
     // Stack(?) of local variables in scope at any point during compilation.
     // We use a 1 byte instruction to declare(?) a local and another to indicate
     // The index of the local in a collection, meaning the limit of simultaneous locals
@@ -59,10 +70,9 @@ typedef struct {
 
 Parser parser;
 Compiler* current = NULL;
-Chunk* compilingChunk;
 
 static Chunk* currentChunk() {
-    return compilingChunk;
+    return &current->function->chunk;
 }
 
 static void errorAt(Token* token, const char* message) {
@@ -197,20 +207,38 @@ static void patchJump(int offset) {
     currentChunk()->code[offset + 1] = jumpLength & 0xff;
 }
 
-static void initCompiler(Compiler* compiler) {
+static void initCompiler(Compiler* compiler, FunctionType type) {
+    compiler->enclosing = current;
+    compiler->function = NULL; // assign null first because gc stuff(?)
+    compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+    compiler->function = newFunction();
     current = compiler;
+
+    if (type != TYPE_SCRIPT) {
+        current->function->name = copyString(parser.previous.start, parser.previous.length);
+    }
+
+    Local* local = &current->locals[current->localCount++];
+    local->depth = 0;
+    local->name.start = "";
+    local->name.length = 0;
 }
 
-static void endCompiler() {
+static ObjFunction* endCompiler() {
     emitReturn();
+    ObjFunction* function = current->function;
 
 #ifdef DEBUG_PRINT_CODE
     if (!parser.hadError) {
-        disassembleChunk(currentChunk(), "code");
+        disassembleChunk(currentChunk(), function->name != NULL ? function->name->chars : "<script>");
     }
 #endif
+
+    current = current->enclosing;
+
+    return function;
 }
 
 // This method just changes a variable that represents scope depth.
@@ -241,6 +269,7 @@ static int resolveLocal(Compiler* compiler, Token* name);
 static uint8_t parseVariable(const char* errorMessage);
 static void defineVariable(uint8_t global);
 static void and_(bool canAssign);
+static void markInitialized();
 
 static void binary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
@@ -281,6 +310,41 @@ static void block() {
     }
 
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+}
+
+static void function(FunctionType type) {
+    Compiler compiler;
+    initCompiler(&compiler, type);
+    beginScope(); // scope doesn't need to be ended because we end the whole compiler
+
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+
+    if (!check(TOKEN_RIGHT_PAREN)) {
+        do {
+            current->function->arity++;
+
+            if (current->function->arity > 255) {
+                errorAtCurrent("Can't have more than 255 parameters.");
+            }
+
+            uint8_t constant = parseVariable("Expect parameter name.");
+            defineVariable(constant);
+        } while (tryConsume(TOKEN_COMMA));
+    }
+
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+    block();
+
+    ObjFunction* function = endCompiler();
+    emitBytes(OP_CONSTANT, makeConstant(TO_OBJ_VAL((Obj*)function)));
+}
+
+static void funDeclaration() {
+    uint8_t global = parseVariable("Expect function name.");
+    markInitialized(); // mark variable immediately as initialized so functions can refer to themselves
+    function(TYPE_FUNCTION); // compile params and body
+    defineVariable(global);
 }
 
 static void varDeclaration() {
@@ -489,7 +553,9 @@ static void synchronize() {
 }
 
 static void declaration() {
-    if (tryConsume(TOKEN_VAR)) {
+    if (tryConsume(TOKEN_FUN)) {
+        funDeclaration();
+    } else if (tryConsume(TOKEN_VAR)) {
         varDeclaration();
     } else {
         statement();
@@ -752,6 +818,8 @@ static uint8_t parseVariable(const char* errorMessage) {
 }
 
 static void markInitialized() {
+    if (current->scopeDepth == 0) return;
+
     current->locals[current->localCount - 1].depth = current->scopeDepth;
 }
 
@@ -782,11 +850,10 @@ static ParseRule* getRule(TokenType type) {
     return &rules[type];
 }
 
-bool compile(const char *source, Chunk* chunk) {
+ObjFunction* compile(const char* source) {
     initScanner(source);
     Compiler compiler;
-    initCompiler(&compiler);
-    compilingChunk = chunk;
+    initCompiler(&compiler, TYPE_SCRIPT);
 
     parser.hadError = false;
     parser.panicMode = false;
@@ -797,9 +864,9 @@ bool compile(const char *source, Chunk* chunk) {
         declaration();
     }
 
-    endCompiler();
+    ObjFunction* function = endCompiler();
 
-    return !parser.hadError;
+    return parser.hadError ? NULL : function;
 }
 
 // Vaughan Pratt parsing (in our context)...

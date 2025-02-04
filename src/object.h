@@ -2,15 +2,21 @@
 #define clox_object_h
 
 #include "common.h"
+#include "chunk.h"
 #include "value.h"
 
 #define GET_OBJ_TYPE(value) (FROM_OBJ_VAL(value)->type) 
+
+#define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_STRING_OBJ(value) isObjType(value, OBJ_STRING)
+
+#define AS_FUNCTION(value) ((ObjFunction*)FROM_OBJ_VAL(value))
 #define AS_STRING_OBJ(value) ((ObjString*)FROM_OBJ_VAL(value))
 #define AS_CSTRING(value) (((ObjString*)FROM_OBJ_VAL(value))->chars)
 
 // all heap allocated types
 typedef enum {
+    OBJ_FUNCTION,
     OBJ_STRING,
 } ObjType;
 
@@ -27,6 +33,13 @@ struct Obj {
     struct Obj* next; // intrusive linked list implementation to track heap allocated objects
 };
 
+typedef struct {
+    Obj obj; // Lox functions are first class
+    int arity; // primARY (1 param), secondARY (2 params)...
+    Chunk chunk; // body
+    ObjString* name;
+} ObjFunction;
+
 struct ObjString {
     Obj obj;
     int length;
@@ -34,6 +47,7 @@ struct ObjString {
     uint32_t hash; // store the hash for a string here so the hash can be cached
 };
 
+ObjFunction* newFunction();
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
 void printObject(Value value);
