@@ -167,6 +167,7 @@ static int emitJump(uint8_t instruction) {
 }
 
 static void emitReturn() {
+    emitByte(OP_NIL); // Somehow this makes it so functions *implicitly* return nil
     emitByte(OP_RETURN);
 }
 
@@ -220,6 +221,7 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
         current->function->name = copyString(parser.previous.start, parser.previous.length);
     }
 
+    // empty local in the first slot represents the implicit main function(?)
     Local* local = &current->locals[current->localCount++];
     local->depth = 0;
     local->name.start = "";
@@ -270,6 +272,7 @@ static uint8_t parseVariable(const char* errorMessage);
 static void defineVariable(uint8_t global);
 static void and_(bool canAssign);
 static void markInitialized();
+static uint8_t argumentList();
 
 static void binary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
@@ -289,6 +292,11 @@ static void binary(bool canAssign) {
         case TOKEN_SLASH: emitByte(OP_DIVIDE); break;
         default: return; // unreachable
     }
+}
+
+static void call(bool canAssign) {
+    uint8_t argCount = argumentList();
+    emitBytes(OP_CALL, argCount);
 }
 
 static void literal(bool canAssign) {
@@ -336,8 +344,8 @@ static void function(FunctionType type) {
     consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.");
     block();
 
-    ObjFunction* function = endCompiler();
-    emitBytes(OP_CONSTANT, makeConstant(TO_OBJ_VAL((Obj*)function)));
+    ObjFunction* endedFunction = endCompiler();
+    emitBytes(OP_CONSTANT, makeConstant(TO_OBJ_VAL((Obj*)endedFunction)));
 }
 
 static void funDeclaration() {
@@ -500,6 +508,20 @@ static void printStatement() {
     emitByte(OP_PRINT);
 }
 
+static void returnStatement() {
+    if (current->type == TYPE_SCRIPT) {
+        error("Can't return from top-level code.");
+    }
+
+    if (tryConsume(TOKEN_SEMICOLON)) {
+        emitReturn();
+    } else {
+        expression();
+        consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
+        emitByte(OP_RETURN);
+    }
+}
+
 static void whileStatement() {
     // Record the point when the loop condition is evaluated.
     int preConditionOffset = currentChunk()->count;
@@ -573,6 +595,8 @@ static void statement() {
         forStatement();
     } else if (tryConsume(TOKEN_IF)) {
         ifStatement();
+    } else if (tryConsume(TOKEN_RETURN)) {
+        returnStatement();
     } else if (tryConsume(TOKEN_WHILE)) {
         whileStatement();
     } else if (tryConsume(TOKEN_LEFT_BRACE)) {
@@ -668,7 +692,7 @@ static void unary(bool canAssign) {
 //  type                    prefix     infix   precedence
 //                          function   function
 ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN]    = {grouping, NULL,   PREC_NONE},
+    [TOKEN_LEFT_PAREN]    = {grouping, call,   PREC_CALL},
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
     [TOKEN_LEFT_BRACE]    = {NULL,     NULL,   PREC_NONE}, 
     [TOKEN_RIGHT_BRACE]   = {NULL,     NULL,   PREC_NONE},
@@ -831,6 +855,25 @@ static void defineVariable(uint8_t global) {
     }
 
     emitBytes(OP_DEFINE_GLOBAL, global);
+}
+
+static uint8_t argumentList() {
+    uint8_t argCount = 0;
+
+    if (!check(TOKEN_RIGHT_PAREN)) {
+        do {
+            expression();
+
+            if (argCount == 255) {
+                error("Can't have more than 255 arguments.");
+            }
+
+            argCount++;
+        } while (tryConsume(TOKEN_COMMA));
+    }
+
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+    return argCount;
 }
 
 static void and_(bool canAssign) {
