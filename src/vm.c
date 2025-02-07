@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "chunk.h"
 #include "common.h"
 #include "debug.h"
@@ -12,9 +13,25 @@
 
 VM vm;
 
+static Value clockNative(int argCount, Value* args) {
+    return TO_NUM_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
 static void resetStack() {
     vm.stackTop = vm.stack;
     vm.frameCount = 0;
+}
+
+// The value stack doesn't actually remove any data. It just moves the stackTop
+// pointer to indicate the size of the used stack. If stackTop == stack, the stack is "empty".
+void push(Value value) {
+    *vm.stackTop = value;
+    vm.stackTop++;
+}
+
+Value pop() {
+    vm.stackTop--;
+    return *vm.stackTop;
 }
 
 static void runtimeError(const char* format, ...) {
@@ -40,29 +57,30 @@ static void runtimeError(const char* format, ...) {
     resetStack();
 }
 
+static void defineNative(const char* name, NativeFn function) {
+    // Push and pop the name and the function because copyString and newNative dynamically
+    // allocate memory, meaning the GC can potentially be triggered. Putting the values on
+    // the stack makes sure the GC doesn't get rid of them prematurely(?)
+    push(TO_OBJ_VAL((Obj*)copyString(name, (int)strlen(name))));
+    push(TO_OBJ_VAL((Obj*)newNative(function)));
+    tableSet(&vm.globals, AS_STRING_OBJ(vm.stack[0]), vm.stack[1]);
+    pop();
+    pop();
+}
+
 void initVM() {
     resetStack();
     vm.objects = NULL;
     initTable(&vm.globals);
     initTable(&vm.strings);
+
+    defineNative("clock", clockNative);
 }
 
 void freeVM() {
     freeTable(&vm.globals);
     freeTable(&vm.strings);
     freeObjects();
-}
-
-// The value stack doesn't actually remove any data. It just moves the stackTop
-// pointer to indicate the size of the used stack. If stackTop == stack, the stack is "empty".
-void push(Value value) {
-    *vm.stackTop = value;
-    vm.stackTop++;
-}
-
-Value pop() {
-    vm.stackTop--;
-    return *vm.stackTop;
 }
 
 static Value peekStack(int distance) {
@@ -92,6 +110,13 @@ static bool callValue(Value callee, int argCount) {
         switch (GET_OBJ_TYPE(callee)) {
             case OBJ_FUNCTION:
                 return call(AS_FUNCTION(callee), argCount);
+            case OBJ_NATIVE: {
+                NativeFn native = AS_NATIVE(callee);
+                Value result = native(argCount, vm.stackTop - argCount);
+                vm.stackTop -= argCount + 1;
+                push(result);
+                return true;
+            }
             default:
                 break; // non-callable object type
         }
