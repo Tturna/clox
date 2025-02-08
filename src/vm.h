@@ -11,7 +11,7 @@
 
 // CallFrame represents a single on-going function call.
 typedef struct {
-    ObjFunction* function; // the function being called
+    ObjClosure* closure; // the closure (which might just wrap a simple function) being called
     uint8_t* ip; // not really "return address" but used to jump after the function is done(?)
     Value* slots; // first slot in the VM's value stack that the function can use
 } CallFrame;
@@ -25,6 +25,7 @@ typedef struct {
     Value* stackTop; // always points one element past the last item
     Table globals; // global variables
     Table strings; // interned strings
+    ObjUpvalue* openUpvalues; // head of linked list of upvalues still on the stack
     Obj* objects; // points to the head of the heap allocated object linked list
 } VM;
 

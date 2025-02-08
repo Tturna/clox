@@ -7,10 +7,12 @@
 
 #define GET_OBJ_TYPE(value) (FROM_OBJ_VAL(value)->type) 
 
+#define IS_CLOSURE(value) isObjType(value, OBJ_CLOSURE)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 #define IS_STRING_OBJ(value) isObjType(value, OBJ_STRING)
 
+#define AS_CLOSURE(value) ((ObjClosure*)FROM_OBJ_VAL(value))
 #define AS_FUNCTION(value) ((ObjFunction*)FROM_OBJ_VAL(value))
 #define AS_NATIVE(value) (((ObjNative*)FROM_OBJ_VAL(value))->function)
 #define AS_STRING_OBJ(value) ((ObjString*)FROM_OBJ_VAL(value))
@@ -18,9 +20,11 @@
 
 // all heap allocated types
 typedef enum {
+    OBJ_CLOSURE,
     OBJ_FUNCTION,
     OBJ_NATIVE, // native function
     OBJ_STRING,
+    OBJ_UPVALUE
 } ObjType;
 
 // In C, the fields of a struct are arranged in memory in the order they are declared.
@@ -39,6 +43,7 @@ struct Obj {
 typedef struct {
     Obj obj; // Lox functions are first class
     int arity; // primARY (1 param), secondARY (2 params)...
+    int upvalueCount;
     Chunk chunk; // body
     ObjString* name;
 } ObjFunction;
@@ -57,10 +62,30 @@ struct ObjString {
     uint32_t hash; // store the hash for a string here so the hash can be cached
 };
 
+// Use objects to store upvalues where the local variable has escaped "the stack".
+typedef struct ObjUpvalue {
+    Obj obj;
+    Value* location; // "points to the closed-over variable"
+    Value closed; // Value of the captured variable once it goes out of the stack.
+    // Store "open upvalues" or upvalues still on the stack in a linked list.
+    struct ObjUpvalue* next;
+} ObjUpvalue;
+
+// At compile time, we create an ObjFunction to represent a function. At runtime, that object
+// is wrapped in an ObjClosure to hold info about the lexical scope.
+typedef struct {
+    Obj obj;
+    ObjFunction* function;
+    ObjUpvalue** upvalues;
+    int upvalueCount; // redundant because ObjFunction also has this value but GC needs it
+} ObjClosure;
+
+ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
 ObjNative* newNative(NativeFn function);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
+ObjUpvalue* newUpvalue(Value* slot);
 void printObject(Value value);
 
 static inline bool isObjType(Value value, ObjType type) {
