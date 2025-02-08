@@ -1,0 +1,18 @@
+fun IncrementerMaker(num) {
+    var incAmount = 1;
+    var value = num;
+
+    fun Incrementer() {
+        value = value + incAmount;
+        return value;
+    }
+
+    return Incrementer;
+}
+
+var myVal = 0;
+var myIncrementer = IncrementerMaker(0);
+print myVal;
+myVal = myIncrementer();
+myVal = myIncrementer();
+print myVal;
