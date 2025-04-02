@@ -37,6 +37,7 @@ typedef enum {
 // a pointer to the Obj field and vice versa.
 struct Obj {
     ObjType type;
+    bool isMarked; // For GC
     struct Obj* next; // intrusive linked list implementation to track heap allocated objects
 };
 
