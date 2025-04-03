@@ -26,7 +26,14 @@ typedef struct {
     Table globals; // global variables
     Table strings; // interned strings
     ObjUpvalue* openUpvalues; // head of linked list of upvalues still on the stack
+
+    size_t bytesAllocated;
+    size_t nextGC;
+
     Obj* objects; // points to the head of the heap allocated object linked list
+    int grayCount; // For tracing objects for GC
+    int grayCapacity; // -||-
+    Obj** grayStack; // -||-
 } VM;
 
 typedef enum {
@@ -42,5 +49,7 @@ extern VM vm;
 void initVM();
 void freeVM();
 InterpretResult interpret(const char* source);
+void push();
+Value pop();
 
 #endif

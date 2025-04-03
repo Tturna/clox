@@ -59,9 +59,14 @@ static ObjString* allocateString(char* chars, int length, uint32_t hash) {
     string->chars = chars;
     string->hash = hash; // eager caching of string hashes
 
+    // Push to stack so that if tableSet triggers GC, the value is not swept.
+    push(TO_OBJ_VAL((Obj*)string));
+
     // intern all strings automatically. We only care about the keys so we use the
     // hash table like a hash set
     tableSet(&vm.strings, string, TO_NIL_VAL);
+    pop();
+
     return string;
 }
 
