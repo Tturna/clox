@@ -7,11 +7,13 @@
 
 #define GET_OBJ_TYPE(value) (FROM_OBJ_VAL(value)->type) 
 
+#define IS_CLASS(value) isObjType(value, OBJ_CLASS)
 #define IS_CLOSURE(value) isObjType(value, OBJ_CLOSURE)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 #define IS_STRING_OBJ(value) isObjType(value, OBJ_STRING)
 
+#define AS_CLASS(value) ((ObjClass*)FROM_OBJ_VAL(value))
 #define AS_CLOSURE(value) ((ObjClosure*)FROM_OBJ_VAL(value))
 #define AS_FUNCTION(value) ((ObjFunction*)FROM_OBJ_VAL(value))
 #define AS_NATIVE(value) (((ObjNative*)FROM_OBJ_VAL(value))->function)
@@ -20,6 +22,7 @@
 
 // all heap allocated types
 typedef enum {
+    OBJ_CLASS,
     OBJ_CLOSURE,
     OBJ_FUNCTION,
     OBJ_NATIVE, // native function
@@ -81,6 +84,12 @@ typedef struct {
     int upvalueCount; // redundant because ObjFunction also has this value but GC needs it
 } ObjClosure;
 
+typedef struct {
+    Obj obj;
+    ObjString* name;
+} ObjClass;
+
+ObjClass* newClass(ObjString* name);
 ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
 ObjNative* newNative(NativeFn function);

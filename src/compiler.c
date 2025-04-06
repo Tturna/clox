@@ -135,6 +135,7 @@ static void consume(TokenType type, const char* message) {
     errorAtCurrent(message);
 }
 
+// This function is called "match()" in the book.
 static bool tryConsume(TokenType type) {
     bool matched = check(type);
 
@@ -289,6 +290,7 @@ static void and_(bool canAssign);
 static void markInitialized();
 static uint8_t argumentList();
 static int resolveUpvalue(Compiler* compiler, Token* name);
+static void declareLocalVariable();
 
 static void binary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
@@ -371,6 +373,18 @@ static void function(FunctionType type) {
         emitByte(compiler.upvalues[i].isLocal ? 1 : 0);
         emitByte(compiler.upvalues[i].index);
     }
+}
+
+static void classDeclaration() {
+    consume(TOKEN_IDENTIFIER, "Expect class name.");
+    uint8_t nameConstant = identifierConstant(&parser.previous);
+    declareLocalVariable();
+
+    emitBytes(OP_CLASS, nameConstant);
+    defineVariable(nameConstant);
+
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
 }
 
 static void funDeclaration() {
@@ -600,7 +614,9 @@ static void synchronize() {
 }
 
 static void declaration() {
-    if (tryConsume(TOKEN_FUN)) {
+    if (tryConsume(TOKEN_CLASS)) {
+        classDeclaration();
+    } else if (tryConsume(TOKEN_FUN)) {
         funDeclaration();
     } else if (tryConsume(TOKEN_VAR)) {
         varDeclaration();

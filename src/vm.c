@@ -408,6 +408,9 @@ static InterpretResult run() {
                 frame = &vm.frames[vm.frameCount - 1];
                 break;
             }
+            case OP_CLASS:
+                push(TO_OBJ_VAL((Obj*)newClass(READ_STRING())));
+                break;
         }
     }
 
