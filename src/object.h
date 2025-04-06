@@ -11,7 +11,7 @@
 #define IS_CLASS(value) isObjType(value, OBJ_CLASS)
 #define IS_CLOSURE(value) isObjType(value, OBJ_CLOSURE)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
-#define IS_INSTANE(value) isObjType(value, OBJ_INSTANCE)
+#define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 #define IS_STRING_OBJ(value) isObjType(value, OBJ_STRING)
 

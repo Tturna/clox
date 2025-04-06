@@ -1,0 +1,4 @@
+class Foo {}
+
+var asd = 1;
+print Foo;

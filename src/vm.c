@@ -300,6 +300,39 @@ static InterpretResult run() {
                 *frame->closure->upvalues[slot]->location = peekStack(0);
                 break;
             }
+            case OP_GET_PROPERTY: {
+                if (!IS_INSTANCE(peekStack(0))) {
+                    runtimeError("Only instances have properties");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                ObjInstance* instance = AS_INSTANCE(peekStack(0));
+                ObjString* name = READ_STRING();
+                Value value;
+
+                if (tableGet(&instance->fields, name, &value)) {
+                    pop(); // Instance
+                    push(value); // Property value
+                    break;
+                }
+
+                runtimeError("Undefined property '%s'.", name->chars);
+                return INTERPRET_RUNTIME_ERROR;
+            }
+            case OP_SET_PROPERTY: {
+                if (!IS_INSTANCE(peekStack(1))) {
+                    runtimeError("Only instances have fields");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjInstance* instance = AS_INSTANCE(peekStack(1));
+                tableSet(&instance->fields, READ_STRING(), peekStack(0));
+                // Do this funky stack juggle because I guess we want it so that
+                // `print toast.jam = "grape"` prints "grape".
+                Value value = pop();
+                pop();
+                push(value);
+                break;
+            }
             case OP_EQUAL: {
                Value b = pop();
                Value a = pop();
