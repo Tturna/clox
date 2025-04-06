@@ -4,18 +4,21 @@
 #include "common.h"
 #include "chunk.h"
 #include "value.h"
+#include "table.h"
 
 #define GET_OBJ_TYPE(value) (FROM_OBJ_VAL(value)->type) 
 
 #define IS_CLASS(value) isObjType(value, OBJ_CLASS)
 #define IS_CLOSURE(value) isObjType(value, OBJ_CLOSURE)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
+#define IS_INSTANE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 #define IS_STRING_OBJ(value) isObjType(value, OBJ_STRING)
 
 #define AS_CLASS(value) ((ObjClass*)FROM_OBJ_VAL(value))
 #define AS_CLOSURE(value) ((ObjClosure*)FROM_OBJ_VAL(value))
 #define AS_FUNCTION(value) ((ObjFunction*)FROM_OBJ_VAL(value))
+#define AS_INSTANCE(value) ((ObjInstance*)FROM_OBJ_VAL(value))
 #define AS_NATIVE(value) (((ObjNative*)FROM_OBJ_VAL(value))->function)
 #define AS_STRING_OBJ(value) ((ObjString*)FROM_OBJ_VAL(value))
 #define AS_CSTRING(value) (((ObjString*)FROM_OBJ_VAL(value))->chars)
@@ -25,6 +28,7 @@ typedef enum {
     OBJ_CLASS,
     OBJ_CLOSURE,
     OBJ_FUNCTION,
+    OBJ_INSTANCE,
     OBJ_NATIVE, // native function
     OBJ_STRING,
     OBJ_UPVALUE
@@ -89,9 +93,16 @@ typedef struct {
     ObjString* name;
 } ObjClass;
 
+typedef struct {
+    Obj obj;
+    ObjClass* klass;
+    Table fields;
+} ObjInstance;
+
 ObjClass* newClass(ObjString* name);
 ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
+ObjInstance* newInstance(ObjClass* klass);
 ObjNative* newNative(NativeFn function);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
