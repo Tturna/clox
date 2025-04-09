@@ -1,4 +1,6 @@
 class Foo {}
 
-var asd = 1;
-print Foo;
+var f = Foo();
+f.one = 1;
+f.two = 2;
+print f.one + f.two;
