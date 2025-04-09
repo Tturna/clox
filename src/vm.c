@@ -116,6 +116,10 @@ static bool call(ObjClosure* closure, int argCount) {
 static bool callValue(Value callee, int argCount) {
     if (IS_OBJ(callee)) {
         switch (GET_OBJ_TYPE(callee)) {
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
+                return call(bound->method, argCount);
+            }
             case OBJ_CLASS: {
                 ObjClass* klass = AS_CLASS(callee);
                 vm.stackTop[-argCount - 1] = TO_OBJ_VAL((Obj*)newInstance(klass));
@@ -137,6 +141,20 @@ static bool callValue(Value callee, int argCount) {
 
     runtimeError("Can only call functions and classes.");
     return false;
+}
+
+static bool bindMethod(ObjClass* klass, ObjString* name) {
+    Value method;
+
+    if (!tableGet(&klass->methods, name, &method)) {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+
+    ObjBoundMethod* bound = newBoundMethod(peekStack(0), AS_CLOSURE(method));
+    pop();
+    push(TO_OBJ_VAL((Obj*)bound));
+    return true;
 }
 
 static ObjUpvalue* captureUpvalue(Value* local) {
@@ -172,6 +190,13 @@ static void closeUpvalues(Value* last) {
         upvalue->location = &upvalue->closed;
         vm.openUpvalues = upvalue->next;
     }
+}
+
+static void defineMethod(ObjString* name) {
+    Value method = peekStack(0);
+    ObjClass* klass = AS_CLASS(peekStack(1));
+    tableSet(&klass->methods, name, method);
+    pop();
 }
 
 static bool isFalsey(Value value) {
@@ -310,14 +335,19 @@ static InterpretResult run() {
                 ObjString* name = READ_STRING();
                 Value value;
 
+                // Check if attempting to get a field
                 if (tableGet(&instance->fields, name, &value)) {
                     pop(); // Instance
                     push(value); // Property value
                     break;
                 }
 
-                runtimeError("Undefined property '%s'.", name->chars);
-                return INTERPRET_RUNTIME_ERROR;
+                // Check if attempting to get a method
+                if (!bindMethod(instance->klass, name)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                break;
             }
             case OP_SET_PROPERTY: {
                 if (!IS_INSTANCE(peekStack(1))) {
@@ -449,6 +479,10 @@ static InterpretResult run() {
             case OP_CLASS:
                 push(TO_OBJ_VAL((Obj*)newClass(READ_STRING())));
                 break;
+            case OP_METHOD: {
+                defineMethod(READ_STRING());
+                break;
+            }
         }
     }
 
