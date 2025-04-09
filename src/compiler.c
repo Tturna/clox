@@ -925,6 +925,7 @@ static void addLocal(Token name) {
 }
 
 static void declareLocalVariable() {
+    if (current->scopeDepth == 0) return;
     Token* name = &parser.previous;
 
     // Check if variable is already defined in current scope.
