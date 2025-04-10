@@ -57,6 +57,7 @@ typedef struct {
 
 typedef enum {
     TYPE_FUNCTION,
+    TYPE_INITIALIZER,
     TYPE_METHOD,
     TYPE_SCRIPT
 } FunctionType;
@@ -183,7 +184,14 @@ static int emitJump(uint8_t instruction) {
 }
 
 static void emitReturn() {
-    emitByte(OP_NIL); // Somehow this makes it so functions *implicitly* return nil
+    if (current->type == TYPE_INITIALIZER) {
+        // For initializer methods, return the class instance.
+        // This "loads slot 0, which contains the instance".
+        emitBytes(OP_GET_LOCAL, 0);
+    } else {
+        emitByte(OP_NIL); // Somehow this makes it so functions *implicitly* return nil
+    }
+
     emitByte(OP_RETURN);
 }
 
@@ -405,6 +413,12 @@ static void method() {
     consume(TOKEN_IDENTIFIER, "Expect method name.");
     uint8_t constant = identifierConstant(&parser.previous);
     FunctionType type = TYPE_METHOD;
+
+    // Check if compiling an initializer method. Used to return custom value ("this").
+    if (parser.previous.length == 4 && memcmp(parser.previous.start, "init", 4) == 0) {
+        type = TYPE_INITIALIZER;
+    }
+
     function(type);
 
     emitBytes(OP_METHOD, constant);
@@ -604,6 +618,10 @@ static void returnStatement() {
     if (tryConsume(TOKEN_SEMICOLON)) {
         emitReturn();
     } else {
+        if (current->type == TYPE_INITIALIZER) {
+            error("Can't return a value from an initializer.");
+        }
+
         expression();
         consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
         emitByte(OP_RETURN);
