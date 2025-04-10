@@ -160,6 +160,40 @@ static bool callValue(Value callee, int argCount) {
     return false;
 }
 
+// Combines OP_GET_PROPERTY and OP_CALL (?). Supposed to be an optimization.
+static bool invokeFromClass(ObjClass* klass, ObjString* name, int argCount) {
+    Value method;
+
+    if (!tableGet(&klass->methods, name, &method)) {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+
+    return call(AS_CLOSURE(method), argCount);
+}
+
+static bool invoke(ObjString* name, int argCount) {
+    Value receiver = peekStack(argCount);
+
+    if (!IS_INSTANCE(receiver)) {
+        runtimeError("Only instances have methods");
+        return false;
+    }
+
+    ObjInstance* instance = AS_INSTANCE(receiver);
+    Value value;
+
+    // Look for a field with the given name before trying to invoke
+    // a method with that name. This makes it so fields with functions as
+    // values work as expected.
+    if (tableGet(&instance->fields, name, &value)) {
+        vm.stackTop[-argCount - 1] = value;
+        return callValue(value, argCount);
+    }
+
+    return invokeFromClass(instance->klass, name, argCount);
+}
+
 static bool bindMethod(ObjClass* klass, ObjString* name) {
     Value method;
 
@@ -441,6 +475,17 @@ static InterpretResult run() {
                 int argCount = READ_BYTE();
 
                 if (!callValue(peekStack(argCount), argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+
+                frame = &vm.frames[vm.frameCount - 1];
+                break;
+            }
+            case OP_INVOKE: {
+                ObjString* method = READ_STRING();
+                int argCount = READ_BYTE();
+
+                if (!invoke(method, argCount)) {
                     return INTERPRET_RUNTIME_ERROR;
                 }
 
