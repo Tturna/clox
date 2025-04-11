@@ -1,0 +1,32 @@
+class Foo {
+    init(greeting) {
+        this.greeting = greeting;
+    }
+
+    sayHi(firstname) {
+        print this.greeting + " " + firstname + "!";
+    }
+
+    sayBye() {
+        print "bye!";
+    }
+}
+
+class Bar < Foo {
+    sayHi(firstname) {
+        print this.greeting + " " + firstname + " again!";
+        super.sayBye();
+    }
+}
+
+for (var i = 0; i < 3; i = i + 1) {
+    var foo_instance = Foo("Hey");
+    foo_instance.sayHi("Jerry");
+
+    var bar_instance = Bar("Sup");
+    bar_instance.sayHi("Barry");
+
+    if (i == 1) {
+        print("Round 2!");
+    }
+}
